@@ -23,7 +23,7 @@ bool initBMP() {
 float getAltitude() {
   // Perform a reading from the sensor
   if (!bmpSensor.performReading()) {
-    return 0.0f;  // Return 0 on failure (you could handle this differently)
+    return 0.0f;  // Return 0 on failure 
   }
   // Calculate altitude using the ground pressure as the baseline.
   return bmpSensor.readAltitude(groundPressure_hPa);
