@@ -1,90 +1,79 @@
-// fake_bmp3xx.h
-#pragma once
-#include <Adafruit_BMP3XX.h>
-
-class FakeBMP3XX : public Adafruit_BMP3XX {
-public:
-  bool fakePerformReading;
-  float fakePressure; // in Pa
-  float fakeAltitude;
-
-  FakeBMP3XX()
-    : fakePerformReading(false), fakePressure(101325.0f), fakeAltitude(0.0f) {}
-
-  // Override performReading to return our fake value.
-  bool performReading() override {
-    return fakePerformReading;
-  }
-
-  // Override readAltitude to return our fake altitude.
-  float readAltitude(float groundPressure) override {
-    return fakeAltitude;
-  }
-
-  // Override pressure member access if needed.
-  // (You may need to expose pressure in your fake sensor depending on how your code accesses it.)
-};
-
-
-// test_altimeter.cpp
 #include <gtest/gtest.h>
 #include "altimeter.h"
-#include "fake_bmp3xx.h"
 
-// Use a fake sensor instance for testing.
-FakeBMP3XX fakeSensor;
+// We need to simulate Serial for testing. For simplicity, we can stub it out.
+namespace {
+  class SerialStub {
+  public:
+    void begin(unsigned long) {}
+    bool operator!() { return false; }
+    void println(const char*) {}
+    void print(const char*) {}
+    void print(float) {}
+  } Serial;
+}
 
-// Before tests run, point bmpSensor to the fake sensor.
-class AltimeterTestFixture : public ::testing::Test {
+// Declare the global variables from main.cpp as extern so we can reset them.
+extern float previousAltitude;
+extern bool parachuteDeployed;
+
+// Declare the function we want to test.
+bool processAltitude(float currentAltitude);
+
+class AltimeterLogicTest : public ::testing::Test {
 protected:
   void SetUp() override {
-    bmpSensor = &fakeSensor;
-    // Reset ground pressure to default before each test.
-    groundPressure_hPa = 1013.25f;
+    // Reset global variables before each test.
+    previousAltitude = 100.0f;  // Assume an initial altitude of 100 m.
+    parachuteDeployed = false;
   }
 };
 
-// Test that getAltitude returns 0.0f if performReading() fails.
-TEST_F(AltimeterTestFixture, GetAltitudeFailsReturnsZero) {
-  fakeSensor.fakePerformReading = false;
-  float altitude = getAltitude();
-  EXPECT_FLOAT_EQ(altitude, 0.0f);
+// Test that apogee is not detected if altitude does not drop significantly.
+TEST_F(AltimeterLogicTest, NoApogeeDetection) {
+  // Simulate a small altitude drop (< 0.5 m drop)
+  bool deployed = processAltitude(99.8f);
+  EXPECT_FALSE(deployed);
+  EXPECT_FALSE(parachuteDeployed);
+  EXPECT_FLOAT_EQ(previousAltitude, 99.8f);
 }
 
-// Test that calibrateGroundPressure sets the groundPressure_hPa correctly.
-TEST_F(AltimeterTestFixture, CalibrateGroundPressureUpdatesPressure) {
-  fakeSensor.fakePerformReading = true;
-  fakeSensor.fakePressure = 101500.0f; // Pressure in Pa; expected ground pressure is 1015.0 hPa.
-  // To simulate the behavior in calibrateGroundPressure, you may need to modify your code 
-  // so that it reads fakeSensor.fakePressure. One approach is to expose a getter in FakeBMP3XX.
-  // For this example, we assume bmpSensor->pressure returns fakeSensor.fakePressure.
-  calibrateGroundPressure();
-  EXPECT_NEAR(groundPressure_hPa, 1015.0f, 0.1f);
+// Test that apogee is detected when altitude drops by more than 0.5 m.
+TEST_F(AltimeterLogicTest, DetectApogeeAndDeploy) {
+  // Simulate a significant drop (e.g., from 100 m to 99.4 m: 0.6 m drop)
+  bool deployed = processAltitude(99.4f);
+  EXPECT_TRUE(deployed);
+  EXPECT_TRUE(parachuteDeployed);
+  EXPECT_FLOAT_EQ(previousAltitude, 99.4f);
 }
 
-// Test that getAltitude returns the simulated altitude when performReading() is successful.
-TEST_F(AltimeterTestFixture, GetAltitudeReturnsSimulatedValue) {
-  fakeSensor.fakePerformReading = true;
-  fakeSensor.fakeAltitude = 250.0f;
-  float altitude = getAltitude();
-  EXPECT_NEAR(altitude, 250.0f, 0.1f);
+// Test that once the parachute is deployed, further calls do not trigger deployment again.
+TEST_F(AltimeterLogicTest, DoNotDeployMultipleTimes) {
+  // First, simulate a drop that triggers deployment.
+  bool deployed = processAltitude(99.4f);
+  EXPECT_TRUE(deployed);
+  // Simulate a secondary drop.
+  deployed = processAltitude(98.0f);
+  // The parachute should already be deployed.
+  EXPECT_FALSE(deployed);
+  EXPECT_TRUE(parachuteDeployed);
+  EXPECT_FLOAT_EQ(previousAltitude, 98.0f);
 }
 
 #if defined(ARDUINO)
 #include <Arduino.h>
 void setup() {
-    Serial.begin(115200);
-    ::testing::InitGoogleTest();
+  Serial.begin(115200);
+  ::testing::InitGoogleTest();
 }
+
 void loop() {
-    RUN_ALL_TESTS();
-    delay(1000);
+  RUN_ALL_TESTS();
+  delay(1000);
 }
 #else
 int main(int argc, char **argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    int ret = RUN_ALL_TESTS();
-    return ret;
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
 }
 #endif
-
